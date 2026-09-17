@@ -15,6 +15,7 @@ const toMessageResponse = (message) => ({
 	text: message.text,
 	messageType: message.messageType,
 	createdAt: message.createdAt,
+	seenBy: message.seenBy || [],
 });
 
 const getMessages = async (req, res) => {
@@ -53,6 +54,7 @@ const sendMessage = async (req, res) => {
 			sender: req.user._id,
 			text,
 			messageType: "text",
+			seenBy: [req.user._id],
 		});
 
 		await Conversation.findByIdAndUpdate(result.conversation._id, {

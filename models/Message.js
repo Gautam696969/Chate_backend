@@ -22,6 +22,12 @@ const messageSchema = new mongoose.Schema(
       enum: ["text", "image", "file", "audio"],
       default: "text",
     },
+    seenBy: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ],
   },
   { timestamps: true }
 );
