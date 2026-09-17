@@ -7,6 +7,7 @@ const Message = require("../models/Message");
 const getToken = (socket) => {
 	const authToken = socket.handshake.auth?.token;
 	const authorizationHeader = socket.handshake.headers.authorization;
+	const queryToken = socket.handshake.query?.token;
 
 	if (authToken) {
 		return authToken.startsWith("Bearer ") ? authToken.slice(7).trim() : authToken;
@@ -14,6 +15,10 @@ const getToken = (socket) => {
 
 	if (authorizationHeader?.startsWith("Bearer ")) {
 		return authorizationHeader.slice(7).trim();
+	}
+
+	if (typeof queryToken === "string" && queryToken) {
+		return queryToken.startsWith("Bearer ") ? queryToken.slice(7).trim() : queryToken;
 	}
 
 	return null;
@@ -83,11 +88,18 @@ const getAuthorizedConversation = async (conversationId, userId) => {
 	return { conversation };
 };
 
+const getParticipantRooms = (conversation) =>
+	conversation.participants.map((participant) => `user:${participant.toString()}`);
+
 const registerChatSocket = (io) => {
 	io.use(authenticateSocket);
 
 	io.on("connection", (socket) => {
 		const userId = socket.user._id;
+		const userRoom = `user:${userId.toString()}`;
+
+		// A private user room survives conversation-room changes and reconnects.
+		socket.join(userRoom);
 
 		const joinConversation = async (conversationId, callback = () => {}) => {
 			try {
@@ -136,9 +148,14 @@ const registerChatSocket = (io) => {
 
 				await message.populate("sender", "name profileImage");
 				const response = toMessage(message);
+				const participantRooms = getParticipantRooms(result.conversation);
 
-				io.to(conversationId).emit("message_received", response);
-				io.to(conversationId).emit("receive_message", response);
+				// Chained rooms are deduplicated by Socket.IO, so a socket in both
+				// the conversation room and its user room receives one event.
+				const recipients = io.to(conversationId);
+				participantRooms.forEach((room) => recipients.to(room));
+				recipients.emit("message_received", response);
+				recipients.emit("receive_message", response);
 				return callback({ ok: true, message: response });
 			} catch (error) {
 				return callback({ ok: false, message: "Unable to send message" });
@@ -159,10 +176,13 @@ const registerChatSocket = (io) => {
 					{ $addToSet: { seenBy: userId } }
 				);
 
-				io.to(conversationId).emit("messages_seen", {
+				const seenEvent = {
 					conversationId,
 					userId,
-				});
+				};
+				const recipients = io.to(conversationId);
+				getParticipantRooms(result.conversation).forEach((room) => recipients.to(room));
+				recipients.emit("messages_seen", seenEvent);
 
 				return callback({ ok: true });
 			} catch (error) {
